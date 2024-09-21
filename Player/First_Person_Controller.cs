@@ -1,65 +1,48 @@
 using System.Collections;
 using UnityEngine;
 
-public class First_Person_Controller : MonoBehaviour
+public class FirstPersonController : MonoBehaviour
 {
-    [Header("SUPER SIMPLE MOVEMENT")]
-    [Header("Movement Speeds")]
-    [SerializeField] private float walkSpeedGroundedVertical = 3.0f;
-    [SerializeField] private float walkSpeedGroundedHorizontal = 3.0f;
+    [Header("Movement Settings")]
+    [SerializeField] private float walkSpeed = 3.0f;
     [SerializeField] private float sprintMultiplier = 2.0f;
-    [SerializeField] private float slideMultiplier = 5.0f;
+    [SerializeField] private float crouchSpeedMultiplier = 0.5f;
 
-    [Header("Jump Parameters")]
+    [Header("Jump Settings")]
     [SerializeField] private float jumpForce = 5.0f;
     [SerializeField] private float gravity = 9.81f;
 
-    [Header("Look Sensitivity")]
-    [SerializeField] private float mouseSensitivity = 2.0f;
-    [SerializeField] private float upDownRange = 80.0f;
-    [SerializeField] private float mouseSmoothing = 2.0f;
-    [SerializeField] private float slideCameraOffset = 0.3f;
+    [Header("Camera Settings")]
+    [SerializeField] private float lookSensitivity = 2.0f;
+    [SerializeField] private float crouchCameraOffset = 0.5f;
+    [SerializeField] private float minYRotation = -90f;
+    [SerializeField] private float maxYRotation = 90f;
 
-    [Header("Inputs Customization")]
-    [SerializeField] private string horizontalMoveInput = "Horizontal";
-    [SerializeField] private string verticalMoveInput = "Vertical";
-    [SerializeField] private string mouseXInput = "Mouse X";
-    [SerializeField] private string mouseYInput = "Mouse Y";
+    [Header("Camera Tilt and Elevation")]
+    [SerializeField] private float cameraTiltAdjustment = 0.0f; // Manual tilt adjustment
+    [SerializeField] private float cameraElevationAdjustment = 0.0f; // Manual elevation adjustment
+
+    [Header("Control Keys")]
+    [SerializeField] private KeyCode crouchKey = KeyCode.LeftControl;
     [SerializeField] private KeyCode sprintKey = KeyCode.LeftShift;
     [SerializeField] private KeyCode jumpKey = KeyCode.Space;
-    [SerializeField] private KeyCode slideKey = KeyCode.C;
-
-    [Header("Inputs Crunch")]
-    [SerializeField] private float crunchMoveInput = 0.3f;
-    [SerializeField] private KeyCode crunchKey = KeyCode.LeftControl;
-
-    // Bobbing effect
-    [Header("Head Bobbing")]
-    [SerializeField] private float bobbingSpeed = 14.0f; // Speed of bobbing
-    [SerializeField] private float bobbingAmount = 0.05f; // Amount of vertical movement during bobbing
-
-    private bool canCrouch = true; // Crouch yapabilmek için bir cooldown
-    private bool canSlide = true; // To track if the slide is on cooldown
 
     private Camera mainCamera;
-    private float verticalRotation;
-    private Vector3 currentMovement = Vector3.zero;
-    private Vector2 currentMouseDelta = Vector2.zero;
     private CharacterController characterController;
+    private Vector3 moveDirection = Vector3.zero;
+    private bool isCrouching = false;
+    private bool crouchRequested = false;
+    private bool uncrouchRequested = false;
 
-    bool isCtrlPressed = false;
-    bool isShiftPressed = false;
-    bool isSlidePressed = false;
+    private float originalCameraY;
+    private float xRotation = 0f;
+    private float yRotation = 0f;
 
-    float originalCameraPositionY;
-    float targetCameraPositionY;
+    [SerializeField] private float crouchHeight = 1.0f;
+    private float originalHeight;
+    private Vector3 originalCenter;
 
-    float bobbingTimer = 0.0f; // Timer for the bobbing effect
-    [SerializeField] private float crouchHeight = 1.0f;  // Eðilme sýrasýnda karakterin yeni yüksekliði
-    private float originalHeight;  // Karakterin orijinal yüksekliði
-    private Vector3 originalCenter;  // Karakterin orijinal merkez pozisyonu
-
-
+    private bool isSprinting = false;
 
     void Start()
     {
@@ -69,225 +52,118 @@ public class First_Person_Controller : MonoBehaviour
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
 
-        originalCameraPositionY = mainCamera.transform.localPosition.y;
-        targetCameraPositionY = originalCameraPositionY - slideCameraOffset;
+        originalCameraY = mainCamera.transform.localPosition.y;
 
-        // Karakterin orijinal yüksekliðini ve merkezini kaydet
         originalHeight = characterController.height;
         originalCenter = characterController.center;
     }
 
-
     void Update()
     {
         HandleMovement();
-        HandleRotation();
-        HandleBobbing(); // Call the bobbing method
+        HandleCameraRotation();
 
-        if (canCrouch)
+        if (Input.GetKeyDown(crouchKey) && !isCrouching)
         {
-            if (Input.GetKeyDown(crunchKey))
-            {
-                isCtrlPressed = true;
-                Crunch(true);
-                StartCoroutine(CrouchCooldown()); // Cooldown baþlatýlýyor
-            }
-            else if (Input.GetKeyUp(crunchKey))
-            {
-                isCtrlPressed = false;
-                Crunch(false);
-                StartCoroutine(CrouchCooldown()); // Cooldown baþlatýlýyor
-            }
+            crouchRequested = true;
+        }
+        else if (Input.GetKeyUp(crouchKey) && isCrouching)
+        {
+            uncrouchRequested = true;
         }
 
-        if (Input.GetKeyDown(crunchKey))
-        {
-            isCtrlPressed = true;
-            Crunch(true);
-        }
-        else if (Input.GetKeyUp(crunchKey))
-        {
-            isCtrlPressed = false;
-            Crunch(false);
-        }
-
-        if (Input.GetKeyDown(sprintKey))
-        {
-            isShiftPressed = true;
-        }
-        else if (Input.GetKeyUp(sprintKey))
-        {
-            isShiftPressed = false;
-        }
-
-        if (Input.GetKeyDown(slideKey) && characterController.isGrounded && canSlide)
-        {
-            isSlidePressed = true;
-            StartCoroutine(SlideCamera(true));
-            StartCoroutine(SlideCooldown()); // Start the cooldown coroutine
-        }
-        else if (Input.GetKeyUp(slideKey))
-        {
-            isSlidePressed = false;
-            StartCoroutine(SlideCamera(false));
-        }
-
-        if (isCtrlPressed && isShiftPressed)
-        {
-            isShiftPressed = false;
-        }
-    }
-
-    // Slide cooldown coroutine
-    IEnumerator SlideCooldown()
-    {
-        canSlide = false; // Disable sliding
-        yield return new WaitForSeconds(2f); // Cooldown for 2 seconds
-        canSlide = true; // Re-enable sliding after cooldown
-    }
-
-    IEnumerator CrouchCooldown()
-    {
-        canCrouch = false; // Crouch yapýlamaz
-        yield return new WaitForSeconds(0.3f); // 0.3 saniye bekler
-        canCrouch = true;  // Crouch tekrar yapýlabilir
+        HandleCrouchCamera();
+        ApplyGravityAndJumping();
+        characterController.Move(moveDirection * Time.deltaTime);
     }
 
     void HandleMovement()
     {
-        float speedMultiplier = isShiftPressed ? sprintMultiplier : 1f;
+        float speedMultiplier = isSprinting ? sprintMultiplier : (isCrouching ? crouchSpeedMultiplier : 1.0f);
 
-        float verticalSpeed;
-        float horizontalSpeed;
+        float verticalSpeed = Input.GetAxis("Vertical") * walkSpeed * speedMultiplier;
+        float horizontalSpeed = Input.GetAxis("Horizontal") * walkSpeed * speedMultiplier;
 
-        if (characterController.isGrounded)
-        {
-            verticalSpeed = Input.GetAxis(verticalMoveInput) * walkSpeedGroundedVertical * speedMultiplier;
-            horizontalSpeed = Input.GetAxis(horizontalMoveInput) * walkSpeedGroundedHorizontal * speedMultiplier;
-        }
-        else
-        {
-            verticalSpeed = Input.GetAxis(verticalMoveInput) * walkSpeedGroundedVertical * speedMultiplier;
-            horizontalSpeed = Input.GetAxis(horizontalMoveInput) * walkSpeedGroundedHorizontal * speedMultiplier;
-        }
+        Vector3 movement = transform.forward * verticalSpeed + transform.right * horizontalSpeed;
 
-        float strafe = Input.GetAxis("Horizontal") * walkSpeedGroundedHorizontal * speedMultiplier;
-        float backwards = Input.GetAxis("Vertical") * walkSpeedGroundedVertical * speedMultiplier;
+        moveDirection.x = movement.x;
+        moveDirection.z = movement.z;
 
-        if (isSlidePressed)
-        {
-            verticalSpeed *= slideMultiplier;
-            horizontalSpeed *= slideMultiplier;
-        }
-
-        Vector3 horizontalMovement = new Vector3(strafe, 0, verticalSpeed + backwards);
-        horizontalMovement = transform.rotation * horizontalMovement;
-
-        HandleGravityAndJumping();
-
-        currentMovement.x = horizontalMovement.x;
-        currentMovement.z = horizontalMovement.z;
-
-        characterController.Move(currentMovement * Time.deltaTime);
+        isSprinting = Input.GetKey(sprintKey) && !isCrouching;
     }
 
-    void HandleGravityAndJumping()
+    void ApplyGravityAndJumping()
     {
         if (characterController.isGrounded)
         {
-            currentMovement.y = -0.5f;
+            moveDirection.y = -0.1f;
 
-            if (Input.GetKey(jumpKey))
+            if (Input.GetKeyDown(jumpKey) && !isCrouching)
             {
-                currentMovement.y = jumpForce;
-            }
-            else
-            {
-                currentMovement.y = -gravity * Time.deltaTime;
+                moveDirection.y = jumpForce;
             }
         }
         else
         {
-            currentMovement.y -= gravity * Time.deltaTime;
+            moveDirection.y -= gravity * Time.deltaTime;
         }
     }
 
-    void HandleRotation()
+    void HandleCameraRotation()
     {
-        float mouseXRotation = Input.GetAxis(mouseXInput) * mouseSensitivity;
-        float mouseYRotation = Input.GetAxis(mouseYInput) * mouseSensitivity;
+        float mouseX = Input.GetAxis("Mouse X") * lookSensitivity;
+        float mouseY = Input.GetAxis("Mouse Y") * lookSensitivity;
 
-        currentMouseDelta.x = Mathf.Lerp(currentMouseDelta.x, mouseXRotation, 1f / mouseSmoothing);
-        currentMouseDelta.y = Mathf.Lerp(currentMouseDelta.y, mouseYRotation, 1f / mouseSmoothing);
+        yRotation += mouseX;
+        transform.localRotation = Quaternion.Euler(0, yRotation, 0);
 
-        verticalRotation -= currentMouseDelta.y;
-        verticalRotation = Mathf.Clamp(verticalRotation, -upDownRange, upDownRange);
+        xRotation -= mouseY;
+        xRotation = Mathf.Clamp(xRotation, minYRotation, maxYRotation);
 
-        transform.Rotate(Vector3.up * currentMouseDelta.x);
-        mainCamera.transform.localRotation = Quaternion.Euler(verticalRotation, 0, 0);
+        // Apply camera tilt and elevation adjustments
+        mainCamera.transform.localRotation = Quaternion.Euler(xRotation + cameraTiltAdjustment, 0, 0);
+        mainCamera.transform.localPosition = new Vector3(mainCamera.transform.localPosition.x, originalCameraY + cameraElevationAdjustment, mainCamera.transform.localPosition.z);
     }
 
-    // Head bobbing effect while walking
-    void HandleBobbing()
+    void HandleCrouchCamera()
     {
-        if (characterController.isGrounded && characterController.velocity.magnitude > 0)
+        if (crouchRequested)
         {
-            bobbingTimer += Time.deltaTime * bobbingSpeed;
-
-            float newCameraYPosition = originalCameraPositionY + Mathf.Sin(bobbingTimer) * bobbingAmount;
-            mainCamera.transform.localPosition = new Vector3(mainCamera.transform.localPosition.x, newCameraYPosition, mainCamera.transform.localPosition.z);
+            crouchRequested = false;
+            isCrouching = true;
+            StartCoroutine(CrouchTransition(originalCameraY - crouchCameraOffset));
+            Crunch(true);
         }
-        else
+        else if (uncrouchRequested)
         {
-            bobbingTimer = 0.0f; // Reset bobbing when not moving
-            mainCamera.transform.localPosition = new Vector3(mainCamera.transform.localPosition.x, originalCameraPositionY, mainCamera.transform.localPosition.z);
+            uncrouchRequested = false;
+            isCrouching = false;
+            StartCoroutine(CrouchTransition(originalCameraY));
+            Crunch(false);
         }
     }
 
-    IEnumerator SlideCamera(bool isSliding)
+    IEnumerator CrouchTransition(float targetHeight)
     {
-        float elapsedTime = 0f;
-        float duration = 0.3f;
+        float duration = 0.2f;
+        float elapsedTime = 0.0f;
+        float startHeight = mainCamera.transform.localPosition.y;
 
         while (elapsedTime < duration)
         {
-            float yOffset = isSliding ? Mathf.Lerp(0, -slideCameraOffset, elapsedTime / duration) :
-                                          Mathf.Lerp(-slideCameraOffset, 0, elapsedTime / duration);
-
-            mainCamera.transform.localPosition = new Vector3(mainCamera.transform.localPosition.x,
-                                                             originalCameraPositionY + yOffset,
-                                                             mainCamera.transform.localPosition.z);
-
+            float newHeight = Mathf.Lerp(startHeight, targetHeight, elapsedTime / duration);
+            mainCamera.transform.localPosition = new Vector3(mainCamera.transform.localPosition.x, newHeight, mainCamera.transform.localPosition.z);
             elapsedTime += Time.deltaTime;
             yield return null;
         }
 
-        mainCamera.transform.localPosition = new Vector3(mainCamera.transform.localPosition.x,
-                                                         isSliding ? targetCameraPositionY : originalCameraPositionY,
-                                                         mainCamera.transform.localPosition.z);
+        mainCamera.transform.localPosition = new Vector3(mainCamera.transform.localPosition.x, targetHeight, mainCamera.transform.localPosition.z);
     }
 
-    void Crunch(bool isCrouching)
+    void Crunch(bool crouching)
     {
-        if (isCrouching)
-        {
-            // Yalnýzca yukarýdan küçültme yapýlacak
-            characterController.height = crouchHeight;
-            characterController.center = new Vector3(originalCenter.x, originalCenter.y - (originalHeight - crouchHeight) / 2, originalCenter.z);
-
-            Vector3 position = mainCamera.transform.localPosition;
-            position.y -= crunchMoveInput;
-            mainCamera.transform.localPosition = position;
-        }
-        else
-        {
-            // Orijinal yüksekliðe geri dönüyoruz
-            characterController.height = originalHeight;
-            characterController.center = originalCenter;
-
-            Vector3 position = mainCamera.transform.localPosition;
-            position.y += crunchMoveInput;
-            mainCamera.transform.localPosition = position;
-        }
+        // Adjust CharacterController height and center based on crouch state
+        characterController.height = crouching ? crouchHeight : originalHeight;
+        characterController.center = new Vector3(0, characterController.height / 2, 0);
     }
 }
